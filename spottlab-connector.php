@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Spottlab connector
- * Description: Exposes a REST endpoint for external monitoring. Returns a lightweight up/down status by default, full Site Health info on request (?full=1), the installed WordPress version, plugins and themes when asked (?software=1), and directory/database sizes on demand (?sizes=1).
- * Version: 1.3.0
+ * Description: Connects this site to Spottlab, so you hear as soon as it goes down, needs an update or is at risk.
+ * Version: 1.3.1
  * Requires at least: 5.8
  * Tested up to: 7.1
  * Author: Spottlab
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
 
 class WP_Health_Check_Plugin
 {
-    const VERSION = '1.3.0';
+    const VERSION = '1.3.1';
     const OPTION_TOKEN = 'health_check_api_token';
     const NAMESPACE_ = 'health/v1';
 
@@ -99,7 +99,7 @@ class WP_Health_Check_Plugin
         if (empty($configured_token)) {
             return new WP_Error(
                 'health_check_no_token',
-                'No access token is configured. Paste the token from the Spottlab dashboard into Settings → Health Check API.',
+                'No access token is configured. Paste the token from the Spottlab dashboard into Settings → Spottlab connector.',
                 ['status' => 401]
             );
         }
@@ -678,7 +678,7 @@ class WP_Health_Check_Plugin
             'tested'        => $release['tested'] ?? '',
             'download_link' => $release['package'] ?? '',
             'sections'      => [
-                'description' => '<p>Lets <a href="https://spottlab.com">Spottlab</a> check this site: whether it is up, its health, and what it runs.</p>',
+                'description' => '<p>Connects this site to <a href="https://spottlab.com">Spottlab</a>, so you hear as soon as it goes down, needs an update or is at risk.</p>',
                 'changelog'   => '<p><a href="' . esc_url(self::UPDATE_URI . '/releases') . '">What changed, release by release</a></p>',
             ],
         ];
@@ -763,10 +763,10 @@ class WP_Health_Check_Plugin
     public function register_settings_page()
     {
         add_options_page(
-            'Health Check API',
-            'Health Check API',
+            'Spottlab connector',
+            'Spottlab connector',
             'manage_options',
-            'health-check-api',
+            'spottlab-connector',
             [$this, 'render_settings_page']
         );
     }
@@ -788,7 +788,7 @@ class WP_Health_Check_Plugin
 
         ?>
         <div class="wrap">
-            <h1>Health Check API</h1>
+            <h1>Spottlab connector</h1>
             <form method="post" action="options.php">
                 <?php settings_fields('health_check_api'); ?>
                 <table class="form-table">

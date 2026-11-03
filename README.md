@@ -1,12 +1,12 @@
 # Spottlab connector for WordPress
 
-The WordPress plugin that lets [Spottlab](https://spottlab.com) check your site: whether it is up, its Site Health, the versions of WordPress, plugins and themes it runs, and how much space it takes. Spottlab asks; the plugin answers only requests carrying your site's token, and changes nothing on the site.
+Connects your WordPress site to [Spottlab](https://spottlab.com), so you hear as soon as it goes down, needs an update or is at risk. It answers only Spottlab, holding your site's token, and changes nothing on the site.
 
 ## Install
 
 1. Download `spottlab-connector.zip` from the [latest release](https://github.com/Spottlab/spottlab-wordpress-connector/releases/latest), or from the Connectors page in Spottlab.
 2. In WordPress, open Plugins → Add New Plugin → Upload Plugin, choose the zip and activate it.
-3. Open Settings → Health Check API and paste the token from your site's page in Spottlab.
+3. Open Settings → Spottlab connector and paste the token from your site's page in Spottlab.
 
 ## Updates
 
