@@ -1,0 +1,19 @@
+{
+    "name": "spottlab/wordpress-connector",
+    "description": "Connects this site to Spottlab, so you hear as soon as it goes down, needs an update or is at risk.",
+    "type": "wordpress-plugin",
+    "keywords": ["wordpress", "plugin", "monitoring", "uptime", "spottlab"],
+    "homepage": "https://spottlab.com",
+    "license": "GPL-2.0-or-later",
+    "support": {
+        "issues": "https://github.com/Spottlab/wordpress-connector/issues",
+        "source": "https://github.com/Spottlab/wordpress-connector"
+    },
+    "require": {
+        "php": ">=7.2",
+        "composer/installers": "^1.0 || ^2.0"
+    },
+    "extra": {
+        "installer-name": "spottlab-connector"
+    }
+}

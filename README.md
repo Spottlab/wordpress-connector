@@ -4,9 +4,17 @@ Connects your WordPress site to [Spottlab](https://spottlab.com), so you hear as
 
 ## Install
 
-1. Download `spottlab-connector.zip` from the [latest release](https://github.com/Spottlab/spottlab-wordpress-connector/releases/latest), or from the Connectors page in Spottlab.
+1. Download `spottlab-connector.zip` from the [latest release](https://github.com/Spottlab/wordpress-connector/releases/latest), or from the Connectors page in Spottlab.
 2. In WordPress, open Plugins → Add New Plugin → Upload Plugin, choose the zip and activate it.
 3. Open Settings → Spottlab connector and paste the token from your site's page in Spottlab.
+
+With Composer, as in a Bedrock project, instead of the zip:
+
+```sh
+composer require spottlab/wordpress-connector
+```
+
+It is a `wordpress-plugin` package, so `composer/installers` (which Bedrock has) puts it in the plugins directory, under the plugin's own folder name, `web/app/plugins/spottlab-connector`, whatever the package is called. Activate it and paste the token as above. Versions are this repository's releases, the same ones the zip comes from.
 
 ## Updates
 

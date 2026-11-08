@@ -2,12 +2,12 @@
 /**
  * Plugin Name: Spottlab connector
  * Description: Connects this site to Spottlab, so you hear as soon as it goes down, needs an update or is at risk.
- * Version: 1.3.1
+ * Version: 1.3.3
  * Requires at least: 5.8
  * Tested up to: 7.1
  * Author: Spottlab
  * Author URI: https://spottlab.com
- * Update URI: https://github.com/Spottlab/spottlab-wordpress-connector
+ * Update URI: https://github.com/Spottlab/wordpress-connector
  */
 
 if (!defined('ABSPATH')) {
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
 
 class WP_Health_Check_Plugin
 {
-    const VERSION = '1.3.1';
+    const VERSION = '1.3.3';
     const OPTION_TOKEN = 'health_check_api_token';
     const NAMESPACE_ = 'health/v1';
 
@@ -27,7 +27,7 @@ class WP_Health_Check_Plugin
      * with it is offered, and only a download matching what was signed is
      * installed. Whoever gets into the repository cannot sign one.
      */
-    const UPDATE_URI = 'https://github.com/Spottlab/spottlab-wordpress-connector';
+    const UPDATE_URI = 'https://github.com/Spottlab/wordpress-connector';
     const UPDATE_KEY = 'p6N6HwMxnnOm1kMDhDT/uTJVQrG5bdkIrN2bVdnL2Qk=';
     const UPDATE_CACHE = 'spottlab_connector_release';
 
@@ -592,7 +592,8 @@ class WP_Health_Check_Plugin
             'package'      => $release['package'],
             'requires'     => $release['requires'],
             'requires_php' => $release['requires_php'],
-            'tested'       => $release['tested'],
+            'tested'       => $this->tested($release['tested']),
+            'icons'        => $this->icons(),
             // Carried to the download, which checks them again.
             'sha256'       => $release['sha256'],
             'signature'    => $release['signature'],
@@ -682,6 +683,43 @@ class WP_Health_Check_Plugin
                 'changelog'   => '<p><a href="' . esc_url(self::UPDATE_URI . '/releases') . '">What changed, release by release</a></p>',
             ],
         ];
+    }
+
+    /**
+     * "Tested up to: 7.1" means every 7.1.x, as WordPress.org reads it. But
+     * Dashboard → Updates compares it with full versions, where 7.1 is older
+     * than 7.1.3, and would call the update untested. So it is given as the
+     * newest 7.1.x this site runs or is offered, as WordPress.org gives it.
+     */
+    private function tested($tested)
+    {
+        $branch = $tested;
+        $versions = [get_bloginfo('version')];
+        $core = get_site_transient('update_core');
+
+        foreach (isset($core->updates) && is_array($core->updates) ? $core->updates : [] as $offer) {
+            if (isset($offer->current) && is_string($offer->current)) {
+                $versions[] = $offer->current;
+            }
+        }
+
+        foreach ($versions as $version) {
+            if ($branch !== '' && strpos($version . '.', $branch . '.') === 0 && version_compare($version, $tested, '>')) {
+                $tested = $version;
+            }
+        }
+
+        return $tested;
+    }
+
+    /**
+     * The icon Dashboard → Updates shows beside this plugin: the one in its
+     * own folder, so showing it fetches nothing from anyone. A copy installed
+     * as the bare file has none, and keeps WordPress's plug.
+     */
+    private function icons()
+    {
+        return is_file(__DIR__ . '/icon.svg') ? ['svg' => plugins_url('icon.svg', __FILE__)] : [];
     }
 
     /**
