@@ -27,6 +27,12 @@ WordPress does not update a plugin by itself when:
 - **it is a must-use plugin** (in `wp-content/mu-plugins`), or `DISALLOW_FILE_MODS` is set, as with Bedrock: replace `spottlab-connector.php` with the new one;
 - **you deploy WordPress from git:** update the file in your repository, or your next deploy will put the old one back.
 
+## Plugin and theme updates
+
+Spottlab lists the plugin and theme updates WordPress itself knows of. That list is only as current as WordPress's last check with WordPress.org. WP-Cron runs that check twice a day, and not at all where cron doesn't run. From 1.4.0, when Spottlab asks for its hourly report and WordPress's last check is more than two hours old, the plugin has WordPress check again first, as Dashboard → Updates does.
+
+If WordPress.org can't be reached, the report goes out as before: the same plugin and theme versions, the updates WordPress already knew of, and the reason the check failed. The check gets ten seconds at most, and nothing Spottlab sends can make it run more often.
+
 ## Checking a release yourself
 
 Each release has `spottlab-connector.zip` and `update.json`. With both in one folder:

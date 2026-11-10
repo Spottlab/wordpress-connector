@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Spottlab connector
  * Description: Connects this site to Spottlab, so you hear as soon as it goes down, needs an update or is at risk.
- * Version: 1.3.3
+ * Version: 1.4.0
  * Requires at least: 5.8
  * Tested up to: 7.1
  * Author: Spottlab
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
 
 class WP_Health_Check_Plugin
 {
-    const VERSION = '1.3.3';
+    const VERSION = '1.4.0';
     const OPTION_TOKEN = 'health_check_api_token';
     const NAMESPACE_ = 'health/v1';
 
@@ -31,6 +31,17 @@ class WP_Health_Check_Plugin
     const UPDATE_KEY = 'p6N6HwMxnnOm1kMDhDT/uTJVQrG5bdkIrN2bVdnL2Qk=';
     const UPDATE_CACHE = 'spottlab_connector_release';
 
+    /**
+     * How each of WordPress's looks at WordPress.org for plugin and theme
+     * updates went (note_update_check), and how old its list may be before
+     * the full report has it look again (refresh_update_lists): two hours,
+     * as often as WordPress looks itself when WP-Cron runs the check. The
+     * looks share ten seconds, well inside the 30 Spottlab waits.
+     */
+    const UPDATE_CHECKS = 'spottlab_connector_update_checks';
+    const UPDATE_LIST_MAX_AGE = 7200;
+    const UPDATE_CHECK_SECONDS = 10;
+
     public function __construct()
     {
         add_action('rest_api_init', [$this, 'register_routes']);
@@ -38,6 +49,7 @@ class WP_Health_Check_Plugin
         add_filter('rest_post_dispatch', [$this, 'never_cache'], 10, 3);
         add_action('admin_menu', [$this, 'register_settings_page']);
         add_action('admin_init', [$this, 'register_settings']);
+        add_action('http_api_debug', [$this, 'note_update_check'], 10, 5);
         add_filter('update_plugins_github.com', [$this, 'offer_update'], 10, 3);
         add_filter('upgrader_pre_download', [$this, 'download_update'], 10, 4);
         add_filter('upgrader_source_selection', [$this, 'keep_folder'], 10, 4);
@@ -158,9 +170,17 @@ class WP_Health_Check_Plugin
                 }
             }
 
-            $payload['status']      = $ok ? 'ok' : 'error';
-            $payload['checks']      = $checks;
-            $payload['site_health'] = $this->site_health_report();
+            // Before Site Health, which lists the updates WordPress knows of.
+            // Whatever the look at WordPress.org does, the checks above stand:
+            // it is not one of them, so a failed look fails nothing.
+            if ($db['ok'] !== false) {
+                $this->refresh_update_lists();
+            }
+
+            $payload['status']        = $ok ? 'ok' : 'error';
+            $payload['checks']        = $checks;
+            $payload['site_health']   = $this->site_health_report();
+            $payload['update_checks'] = $this->update_checks_report();
         }
 
         // What the site runs, for Spottlab to check against known
@@ -567,6 +587,174 @@ class WP_Health_Check_Plugin
     }
 
     /* ---------------------- Updates ---------------------- */
+
+    /**
+     * WordPress lists the updates it knows of as of its last look at
+     * WordPress.org, which WP-Cron makes twice a day: never, where cron does
+     * not run (a password on the whole site, DISABLE_WP_CRON with no system
+     * cron), so a release could go unreported for days. A list older than
+     * UPDATE_LIST_MAX_AGE is looked up again here, before the report.
+     *
+     * The look can add to the report but never cost it. If it fails, the list
+     * stays as it was, since WordPress keeps the updates it knew of. Whatever
+     * it prints or throws is dropped, and its requests share
+     * UPDATE_CHECK_SECONDS. Nothing in the request asks for it: it happens
+     * only when the list is old, however often the report is asked for, and a
+     * failed look counts as one, so the next is two hours on.
+     */
+    private function refresh_update_lists()
+    {
+        if (!function_exists('wp_update_plugins') || !function_exists('wp_update_themes')) {
+            return;
+        }
+
+        $deadline = microtime(true) + self::UPDATE_CHECK_SECONDS;
+
+        // Each request may wait only for what time is left, and none starts
+        // once it is gone: plugins with their own update servers ask them in
+        // the same look, and are held to the same time.
+        $limit = function ($args) use ($deadline) {
+            $timeout = isset($args['timeout']) ? (float) $args['timeout'] : 5.0;
+            $args['timeout'] = max(1.0, min($timeout, $deadline - microtime(true)));
+
+            return $args;
+        };
+        $cutoff = function ($pre) use ($deadline) {
+            return $pre === false && microtime(true) >= $deadline
+                ? new WP_Error('spottlab_update_check_time', 'The update check ran out of time.')
+                : $pre;
+        };
+
+        // Out of a cron run, WordPress looks again only once its list is 12
+        // hours old. Shown the list without its time, it looks now. Only the
+        // copy it reads is changed: the list and the updates in it are kept,
+        // and it saves the time itself when it asks.
+        $forget = [];
+        foreach (['update_plugins', 'update_themes'] as $transient) {
+            $forget[$transient] = function ($list) use (&$forget, $transient) {
+                remove_filter('site_transient_' . $transient, $forget[$transient], PHP_INT_MAX);
+
+                if (is_object($list)) {
+                    $list = clone $list;
+                    unset($list->last_checked);
+                }
+
+                return $list;
+            };
+        }
+
+        add_filter('http_request_args', $limit, PHP_INT_MAX);
+        add_filter('pre_http_request', $cutoff, PHP_INT_MAX);
+        $level = ob_get_level();
+        ob_start();
+
+        try {
+            foreach (['update_plugins' => 'wp_update_plugins', 'update_themes' => 'wp_update_themes'] as $transient => $check) {
+                if (microtime(true) >= $deadline || $this->update_list_age($transient) < self::UPDATE_LIST_MAX_AGE) {
+                    continue;
+                }
+
+                add_filter('site_transient_' . $transient, $forget[$transient], PHP_INT_MAX);
+                $check();
+            }
+        } catch (Throwable $e) {
+            // Another plugin's update code failing loses the look, not the report.
+        } finally {
+            // A notice WordPress prints when it can't reach WordPress.org
+            // would land in front of the JSON and make it unreadable.
+            while (ob_get_level() > $level) {
+                ob_end_clean();
+            }
+
+            foreach ($forget as $transient => $callback) {
+                remove_filter('site_transient_' . $transient, $callback, PHP_INT_MAX);
+            }
+            remove_filter('http_request_args', $limit, PHP_INT_MAX);
+            remove_filter('pre_http_request', $cutoff, PHP_INT_MAX);
+        }
+    }
+
+    /**
+     * Seconds since WordPress last looked for this list's updates, whether
+     * or not the look got through.
+     */
+    private function update_list_age($transient)
+    {
+        $list = get_site_transient($transient);
+
+        return is_object($list) && isset($list->last_checked) ? time() - (int) $list->last_checked : PHP_INT_MAX;
+    }
+
+    /**
+     * Notes how each look at WordPress.org for updates went, whoever made it
+     * (WP-Cron, wp-admin or the report), so the report can say when the list
+     * last came in and why the latest look failed. WordPress keeps neither:
+     * it saves the time before it asks, so a failed look passes for a fresh
+     * one. When the secure request fails, WordPress tries over plain HTTP, so
+     * the last answer is the one kept.
+     */
+    public function note_update_check($response, $context, $class, $args, $url)
+    {
+        if ($context !== 'response' || !is_string($url)
+            || !preg_match('#^https?://api\.wordpress\.org/(plugins|themes)/update-check/#', $url, $match)) {
+            return;
+        }
+
+        $kind = $match[1];
+        $checks = $this->update_checks();
+        $code = is_wp_error($response) ? 0 : (int) wp_remote_retrieve_response_code($response);
+
+        if ($code === 200) {
+            $checks[$kind] = ['ok_at' => time(), 'error' => null];
+        } else {
+            $error = is_wp_error($response) ? $response->get_error_message() : sprintf('WordPress.org answered with HTTP %d.', $code);
+            $checks[$kind] = [
+                'ok_at' => isset($checks[$kind]['ok_at']) ? $checks[$kind]['ok_at'] : null,
+                'error' => substr(trim(wp_strip_all_tags((string) $error)), 0, 250),
+            ];
+        }
+
+        update_site_option(self::UPDATE_CHECKS, $checks);
+    }
+
+    /**
+     * @return array{plugins?: array{ok_at: int|null, error: string|null}, themes?: array{ok_at: int|null, error: string|null}}
+     */
+    private function update_checks()
+    {
+        $checks = get_site_option(self::UPDATE_CHECKS, []);
+
+        return is_array($checks) ? $checks : [];
+    }
+
+    /**
+     * When WordPress last got each list from WordPress.org (UTC), and why its
+     * latest look failed, if it did. Until a look has been noted, as just
+     * after this version is installed, WordPress's own time is all there is.
+     */
+    private function update_checks_report()
+    {
+        $checks = $this->update_checks();
+        $report = [];
+
+        foreach (['plugins' => 'update_plugins', 'themes' => 'update_themes'] as $kind => $transient) {
+            if (isset($checks[$kind]) && is_array($checks[$kind])) {
+                $at = isset($checks[$kind]['ok_at']) ? (int) $checks[$kind]['ok_at'] : null;
+                $error = isset($checks[$kind]['error']) && is_string($checks[$kind]['error']) ? $checks[$kind]['error'] : null;
+            } else {
+                $age = $this->update_list_age($transient);
+                $at = $age === PHP_INT_MAX ? null : time() - $age;
+                $error = null;
+            }
+
+            $report[$kind] = [
+                'checked_at' => $at ? gmdate('Y-m-d H:i:s', $at) : null,
+                'error'      => $error,
+            ];
+        }
+
+        return $report;
+    }
 
     /**
      * The newest release, for WordPress's own update check
