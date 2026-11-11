@@ -33,6 +33,24 @@ Spottlab lists the plugin and theme updates WordPress itself knows of. That list
 
 If WordPress.org can't be reached, the report goes out as before: the same plugin and theme versions, the updates WordPress already knew of, and the reason the check failed. The check gets ten seconds at most, and nothing Spottlab sends can make it run more often.
 
+## WooCommerce
+
+From 1.5.0, on a site where WooCommerce is active, the hourly report also says how the shop is running, so Spottlab can tell you when the site is up but nobody can buy. There is nothing to switch on.
+
+It reports counts, times and settings only:
+
+- when the last order came through, and how many came through or failed in the last day (the failed ones counted by payment gateway);
+- how many orders are pending payment, on hold or processing, and when the oldest in each was placed;
+- which payment gateways are switched on, by id, and which say they are in test mode;
+- whether WooCommerce's database update is waiting, whether the shop is in "coming soon" mode, and which of its shop, cart, checkout and account pages are missing;
+- how many scheduled actions are over an hour late or failed in the last day, and how many of the shop's webhooks WooCommerce has switched off;
+- how many products are out of stock or low on it, where the shop keeps stock;
+- the file names of the theme's WooCommerce templates that are out of date.
+
+It never reports an order itself: not what was bought, what it came to, or who bought it. Like everything else here, it only reads.
+
+Test mode is asked of each gateway in the usual ways gateways keep that setting, so a gateway that keeps it some other way is not noticed. A live gateway is never reported as testing.
+
 ## Checking a release yourself
 
 Each release has `spottlab-connector.zip` and `update.json`. With both in one folder:

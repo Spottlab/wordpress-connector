@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Spottlab connector
  * Description: Connects this site to Spottlab, so you hear as soon as it goes down, needs an update or is at risk.
- * Version: 1.4.0
+ * Version: 1.5.0
  * Requires at least: 5.8
  * Tested up to: 7.1
  * Author: Spottlab
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
 
 class WP_Health_Check_Plugin
 {
-    const VERSION = '1.4.0';
+    const VERSION = '1.5.0';
     const OPTION_TOKEN = 'health_check_api_token';
     const NAMESPACE_ = 'health/v1';
 
@@ -41,6 +41,12 @@ class WP_Health_Check_Plugin
     const UPDATE_CHECKS = 'spottlab_connector_update_checks';
     const UPDATE_LIST_MAX_AGE = 7200;
     const UPDATE_CHECK_SECONDS = 10;
+
+    /**
+     * The section of the full report a WooCommerce shop adds
+     * (woocommerce_report), beside WordPress's own Site Health sections.
+     */
+    const SHOP_SECTION = 'spottlab-woocommerce';
 
     public function __construct()
     {
@@ -180,6 +186,14 @@ class WP_Health_Check_Plugin
             $payload['status']        = $ok ? 'ok' : 'error';
             $payload['checks']        = $checks;
             $payload['site_health']   = $this->site_health_report();
+
+            // A WooCommerce shop says how its orders and payments are
+            // going too, as one more section. Not one of the checks: a
+            // shop with no orders is not a site that is down.
+            $shop = $this->woocommerce_report();
+            if ($shop !== null) {
+                $payload['site_health'][self::SHOP_SECTION] = $shop;
+            }
             $payload['update_checks'] = $this->update_checks_report();
         }
 
@@ -584,6 +598,303 @@ class WP_Health_Check_Plugin
             return 'undefined';
         }
         return $value;
+    }
+
+    /* ---------------------- WooCommerce ---------------------- */
+
+    /**
+     * On a WooCommerce shop: whether orders and payments are coming through,
+     * and whether the shop is set up to take them. Counts, times, settings
+     * and the names of gateways and template files only: never an order,
+     * what was in it, what it came to, or who placed it.
+     *
+     * Null where WooCommerce is not active. Each part is read on its own and
+     * left out if WooCommerce cannot give it (an older version, an extension
+     * in the way), so one that fails costs the report nothing else, and
+     * Spottlab reads a figure that is missing as not known.
+     */
+    private function woocommerce_report()
+    {
+        if (!class_exists('WooCommerce') || !function_exists('WC') || !function_exists('wc_get_orders')) {
+            return null;
+        }
+
+        $report = ['version' => defined('WC_VERSION') ? (string) WC_VERSION : 'undefined'];
+
+        foreach (['shop_setup', 'shop_gateways', 'shop_orders', 'shop_queue', 'shop_templates', 'shop_stock', 'shop_webhooks'] as $part) {
+            try {
+                $report = array_merge($report, (array) $this->{$part}());
+            } catch (Throwable $e) {
+                // Left out.
+            }
+        }
+
+        return $report;
+    }
+
+    /**
+     * Whether the shop is open and whole: WooCommerce's own database update
+     * waiting after a plugin update, "coming soon" mode (9.1+), and the pages
+     * a shop cannot do without.
+     */
+    private function shop_setup()
+    {
+        $out = [];
+
+        if (class_exists('WC_Install') && is_callable(['WC_Install', 'needs_db_update'])) {
+            $out['database_update_needed'] = (bool) WC_Install::needs_db_update();
+        }
+
+        $soon = get_option('woocommerce_coming_soon', null);
+        if (is_string($soon) && $soon !== '') {
+            $out['coming_soon'] = $soon === 'yes';
+        }
+
+        if (function_exists('wc_get_page_id')) {
+            $missing = [];
+            foreach (['shop', 'cart', 'checkout', 'myaccount'] as $page) {
+                $id = (int) wc_get_page_id($page);
+                if ($id < 1 || get_post_status($id) !== 'publish') {
+                    $missing[] = $page;
+                }
+            }
+            $out['pages_missing'] = $missing;
+        }
+
+        return $out;
+    }
+
+    /**
+     * The payment gateways switched on, by id, and those of them that say
+     * they are in test or sandbox mode. Gateways keep that setting each in
+     * its own way, so this asks the usual ones: a guess that can miss a
+     * gateway, never one that names a live gateway as testing.
+     */
+    private function shop_gateways()
+    {
+        $gateways = WC()->payment_gateways();
+        if (!is_object($gateways) || !method_exists($gateways, 'payment_gateways')) {
+            return [];
+        }
+
+        $enabled = [];
+        $testing = [];
+
+        foreach ((array) $gateways->payment_gateways() as $gateway) {
+            if (!is_object($gateway) || !isset($gateway->enabled) || $gateway->enabled !== 'yes' || empty($gateway->id)) {
+                continue;
+            }
+
+            $enabled[] = (string) $gateway->id;
+
+            if ($this->gateway_is_testing($gateway)) {
+                $testing[] = (string) $gateway->id;
+            }
+        }
+
+        return ['gateways_enabled' => $enabled, 'gateways_in_test_mode' => $testing];
+    }
+
+    private function gateway_is_testing($gateway)
+    {
+        if (isset($gateway->testmode) && in_array($gateway->testmode, [true, 'yes', '1', 1], true)) {
+            return true;
+        }
+
+        if (!method_exists($gateway, 'get_option')) {
+            return false;
+        }
+
+        foreach (['testmode', 'test_mode', 'sandbox', 'sandbox_on', 'sandbox_mode', 'test_mode_enabled'] as $key) {
+            if (in_array($gateway->get_option($key, ''), [true, 'yes', '1', 1, 'on'], true)) {
+                return true;
+            }
+        }
+
+        foreach (['environment', 'mode'] as $key) {
+            if (in_array($gateway->get_option($key, ''), ['test', 'testing', 'sandbox'], true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * How orders are going, in numbers and times (UTC): when the last one
+     * came through, how many did and how many failed in the last day (the
+     * failed by gateway), and how many are waiting in each state with since
+     * when the oldest has been. An order "came through" once it is paid for
+     * or awaiting a payment made elsewhere: processing, on hold, completed.
+     */
+    private function shop_orders()
+    {
+        $through = ['processing', 'on-hold', 'completed'];
+        $since   = '>' . (time() - DAY_IN_SECONDS);
+        $out     = [];
+
+        $last = wc_get_orders(['type' => 'shop_order', 'status' => $through, 'limit' => 1, 'orderby' => 'date', 'order' => 'DESC']);
+        $out['last_order_at'] = $this->order_time(is_array($last) && $last ? reset($last) : null);
+        $out['orders_24h']    = $this->order_count(['status' => $through, 'date_created' => $since]);
+
+        $failed  = (array) wc_get_orders(['type' => 'shop_order', 'status' => ['failed'], 'date_created' => $since, 'limit' => 200, 'orderby' => 'date', 'order' => 'DESC']);
+        $by_gate = [];
+        foreach ($failed as $order) {
+            $gateway = is_object($order) && method_exists($order, 'get_payment_method') ? (string) $order->get_payment_method() : '';
+            $gateway = $gateway !== '' ? $gateway : 'unknown';
+            $by_gate[$gateway] = (isset($by_gate[$gateway]) ? $by_gate[$gateway] : 0) + 1;
+        }
+        $out['orders_failed_24h']            = count($failed);
+        $out['orders_failed_24h_by_gateway'] = $by_gate;
+
+        foreach (['pending', 'on-hold', 'processing'] as $status) {
+            $key    = 'orders_' . str_replace('-', '_', $status);
+            $oldest = wc_get_orders(['type' => 'shop_order', 'status' => [$status], 'limit' => 1, 'orderby' => 'date', 'order' => 'ASC']);
+
+            $out[$key]                = $this->order_count(['status' => [$status]]);
+            $out[$key . '_oldest_at'] = $this->order_time(is_array($oldest) && $oldest ? reset($oldest) : null);
+        }
+
+        return $out;
+    }
+
+    private function order_count(array $args)
+    {
+        $found = wc_get_orders(array_merge(['type' => 'shop_order', 'limit' => 1, 'paginate' => true, 'return' => 'ids'], $args));
+
+        return is_object($found) && isset($found->total) ? (int) $found->total : 'undefined';
+    }
+
+    private function order_time($order)
+    {
+        if (!is_object($order) || !method_exists($order, 'get_date_created')) {
+            return 'undefined';
+        }
+
+        $created = $order->get_date_created();
+
+        return is_object($created) && method_exists($created, 'getTimestamp') ? gmdate('Y-m-d H:i:s', $created->getTimestamp()) : 'undefined';
+    }
+
+    /**
+     * WooCommerce's background queue (Action Scheduler), which sends its
+     * emails, renews subscriptions and delivers webhooks: how many actions
+     * are over an hour late, and how many failed in the last day.
+     */
+    private function shop_queue()
+    {
+        if (!class_exists('ActionScheduler') || !class_exists('ActionScheduler_Store') || !function_exists('as_get_datetime_object')) {
+            return [];
+        }
+
+        $store = ActionScheduler::store();
+
+        return [
+            'scheduled_actions_past_due' => (int) $store->query_actions([
+                'status'       => ActionScheduler_Store::STATUS_PENDING,
+                'date'         => as_get_datetime_object('1 hour ago'),
+                'date_compare' => '<=',
+            ], 'count'),
+            'scheduled_actions_failed_24h' => (int) $store->query_actions([
+                'status'           => ActionScheduler_Store::STATUS_FAILED,
+                'modified'         => as_get_datetime_object('24 hours ago'),
+                'modified_compare' => '>=',
+            ], 'count'),
+        ];
+    }
+
+    /**
+     * The theme's copies of WooCommerce's templates that are older than the
+     * ones WooCommerce now ships, by file: what its own status report calls
+     * outdated, and what breaks a cart or checkout after an update.
+     */
+    private function shop_templates()
+    {
+        $status = WC()->plugin_path() . '/includes/admin/class-wc-admin-status.php';
+        if (!class_exists('WC_Admin_Status') && file_exists($status)) {
+            include_once $status;
+        }
+
+        if (!class_exists('WC_Admin_Status') || !method_exists('WC_Admin_Status', 'scan_template_files') || !method_exists('WC_Admin_Status', 'get_file_version')) {
+            return [];
+        }
+
+        $core     = WC()->plugin_path() . '/templates/';
+        $path     = WC()->template_path();
+        $outdated = [];
+
+        foreach ((array) WC_Admin_Status::scan_template_files($core) as $file) {
+            $theirs = null;
+            foreach ([get_stylesheet_directory() . '/' . $file, get_stylesheet_directory() . '/' . $path . $file, get_template_directory() . '/' . $file, get_template_directory() . '/' . $path . $file] as $candidate) {
+                if (file_exists($candidate)) {
+                    $theirs = $candidate;
+                    break;
+                }
+            }
+
+            if ($theirs === null) {
+                continue;
+            }
+
+            $core_version  = WC_Admin_Status::get_file_version($core . $file);
+            $theme_version = WC_Admin_Status::get_file_version($theirs);
+
+            if ($core_version && (empty($theme_version) || version_compare($theme_version, $core_version, '<'))) {
+                $outdated[] = (string) $file;
+            }
+        }
+
+        return ['templates_outdated' => $outdated];
+    }
+
+    /**
+     * How many published products are out of stock, and how many are down to
+     * the shop's own "low stock" threshold: only where the shop keeps stock.
+     */
+    private function shop_stock()
+    {
+        if (get_option('woocommerce_manage_stock') !== 'yes' || !function_exists('wc_get_products')) {
+            return [];
+        }
+
+        global $wpdb;
+        $out = [];
+
+        $none = wc_get_products(['status' => 'publish', 'stock_status' => 'outofstock', 'limit' => 1, 'paginate' => true, 'return' => 'ids']);
+        if (is_object($none) && isset($none->total)) {
+            $out['products_out_of_stock'] = (int) $none->total;
+        }
+
+        if (!empty($wpdb->wc_product_meta_lookup)) {
+            $low = max(1, absint(get_option('woocommerce_notify_low_stock_amount', 2)));
+            $no  = absint(get_option('woocommerce_notify_no_stock_amount', 0));
+
+            $out['products_low_stock'] = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$wpdb->wc_product_meta_lookup} lookup
+                 INNER JOIN {$wpdb->posts} posts ON posts.ID = lookup.product_id
+                 WHERE posts.post_status = 'publish' AND posts.post_type IN ('product', 'product_variation')
+                   AND lookup.stock_quantity IS NOT NULL AND lookup.stock_quantity <= %d AND lookup.stock_quantity > %d",
+                $low,
+                $no
+            ));
+        }
+
+        return $out;
+    }
+
+    /**
+     * How many of the shop's own webhooks WooCommerce has switched off,
+     * which it does to one whose deliveries keep failing.
+     */
+    private function shop_webhooks()
+    {
+        if (!class_exists('WC_Data_Store')) {
+            return [];
+        }
+
+        $counts = WC_Data_Store::load('webhook')->get_count_webhooks_by_status();
+
+        return is_array($counts) ? ['webhooks_disabled' => isset($counts['disabled']) ? (int) $counts['disabled'] : 0] : [];
     }
 
     /* ---------------------- Updates ---------------------- */
