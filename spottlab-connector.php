@@ -2,22 +2,23 @@
 /**
  * Plugin Name: Spottlab connector
  * Description: Connects this site to Spottlab, so you hear as soon as it goes down, needs an update or is at risk.
- * Version: 1.5.0
+ * Version: 1.5.2
  * Requires at least: 5.8
  * Tested up to: 7.1
  * Author: Spottlab
  * Author URI: https://spottlab.com
  * Update URI: https://github.com/Spottlab/wordpress-connector
  */
-
-if (!defined('ABSPATH')) {
+if (! defined('ABSPATH')) {
     exit; // No direct access.
 }
 
 class WP_Health_Check_Plugin
 {
-    const VERSION = '1.5.0';
+    const VERSION = '1.5.2';
+
     const OPTION_TOKEN = 'health_check_api_token';
+
     const NAMESPACE_ = 'health/v1';
 
     /**
@@ -28,8 +29,23 @@ class WP_Health_Check_Plugin
      * installed. Whoever gets into the repository cannot sign one.
      */
     const UPDATE_URI = 'https://github.com/Spottlab/wordpress-connector';
+
     const UPDATE_KEY = 'p6N6HwMxnnOm1kMDhDT/uTJVQrG5bdkIrN2bVdnL2Qk=';
+
     const UPDATE_CACHE = 'spottlab_connector_release';
+
+    /** What a size walk cut short had measured so far, and when it began (sizes_report). */
+    const SIZES_CACHE = 'spottlab_connector_sizes';
+
+    /** The sizes of the last walk that went all the way, and when (sizes_report). */
+    const SIZES_LAST = 'spottlab_connector_sizes_last';
+
+    /**
+     * How long either is used, in seconds: sizes are asked for once a day,
+     * so three of them. Past that a walk begins again from nothing, and
+     * sizes older than that are not given out as the site's.
+     */
+    const SIZES_KEPT = 259200;
 
     /**
      * How each of WordPress's looks at WordPress.org for plugin and theme
@@ -39,7 +55,9 @@ class WP_Health_Check_Plugin
      * looks share ten seconds, well inside the 30 Spottlab waits.
      */
     const UPDATE_CHECKS = 'spottlab_connector_update_checks';
+
     const UPDATE_LIST_MAX_AGE = 7200;
+
     const UPDATE_CHECK_SECONDS = 10;
 
     /**
@@ -67,8 +85,8 @@ class WP_Health_Check_Plugin
     public function register_routes()
     {
         register_rest_route(self::NAMESPACE_, '/check', [
-            'methods'             => 'GET',
-            'callback'            => [$this, 'handle_check'],
+            'methods' => 'GET',
+            'callback' => [$this, 'handle_check'],
             'permission_callback' => [$this, 'authorize'],
         ]);
     }
@@ -85,11 +103,11 @@ class WP_Health_Check_Plugin
      */
     public function never_cache($response, $server, $request)
     {
-        if (strpos($request->get_route(), '/' . self::NAMESPACE_ . '/') !== 0) {
+        if (strpos($request->get_route(), '/'.self::NAMESPACE_.'/') !== 0) {
             return $response;
         }
 
-        if (!defined('DONOTCACHEPAGE')) {
+        if (! defined('DONOTCACHEPAGE')) {
             define('DONOTCACHEPAGE', true);
         }
 
@@ -127,7 +145,7 @@ class WP_Health_Check_Plugin
             $provided = $request->get_param('token');
         }
 
-        if (!is_string($provided) || !hash_equals($configured_token, $provided)) {
+        if (! is_string($provided) || ! hash_equals($configured_token, $provided)) {
             return new WP_Error(
                 'health_check_bad_token',
                 'Invalid access token.',
@@ -142,20 +160,20 @@ class WP_Health_Check_Plugin
     {
         $start = microtime(true);
 
-        $want_full      = $this->flag_requested($request, ['full', 'verbose', 'diagnostics']);
-        $want_software  = $this->flag_requested($request, ['software', 'security']);
-        $want_sizes     = $this->flag_requested($request, ['sizes', 'disk']);
+        $want_full = $this->flag_requested($request, ['full', 'verbose', 'diagnostics']);
+        $want_software = $this->flag_requested($request, ['software', 'security']);
+        $want_sizes = $this->flag_requested($request, ['sizes', 'disk']);
 
         // Basic liveness always runs: is the page/database actually working?
         // If the mu-plugin executed, WP core + plugins + theme loaded without a
         // fatal; a quick DB ping confirms the site can serve real requests.
-        $db  = $this->check_database();
-        $ok  = ($db['ok'] !== false);
+        $db = $this->check_database();
+        $ok = ($db['ok'] !== false);
 
         $payload = [
-            'status'            => $ok ? 'ok' : 'error',
-            'site'              => home_url(),
-            'timestamp'         => current_time('mysql', true),
+            'status' => $ok ? 'ok' : 'error',
+            'site' => home_url(),
+            'timestamp' => current_time('mysql', true),
             'connector_version' => self::VERSION,
         ];
 
@@ -164,9 +182,9 @@ class WP_Health_Check_Plugin
         // as Tools -> Site Health -> Info).
         if ($want_full) {
             $checks = [
-                'core'   => $this->check_core(),
-                'db'     => $db,
-                'disk'   => $this->check_disk_space(),
+                'core' => $this->check_core(),
+                'db' => $db,
+                'disk' => $this->check_disk_space(),
                 'memory' => $this->check_memory(),
             ];
 
@@ -183,9 +201,9 @@ class WP_Health_Check_Plugin
                 $this->refresh_update_lists();
             }
 
-            $payload['status']        = $ok ? 'ok' : 'error';
-            $payload['checks']        = $checks;
-            $payload['site_health']   = $this->site_health_report();
+            $payload['status'] = $ok ? 'ok' : 'error';
+            $payload['checks'] = $checks;
+            $payload['site_health'] = $this->site_health_report();
 
             // A WooCommerce shop says how its orders and payments are
             // going too, as one more section. Not one of the checks: a
@@ -225,7 +243,7 @@ class WP_Health_Check_Plugin
     private function flag_requested(WP_REST_Request $request, array $names)
     {
         foreach ($names as $name) {
-            if (!$request->has_param($name)) {
+            if (! $request->has_param($name)) {
                 continue;
             }
             $value = $request->get_param($name);
@@ -237,6 +255,7 @@ class WP_Health_Check_Plugin
                 return true;
             }
         }
+
         return false;
     }
 
@@ -250,8 +269,8 @@ class WP_Health_Check_Plugin
      */
     private function software_report()
     {
-        if (!function_exists('get_plugins')) {
-            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        if (! function_exists('get_plugins')) {
+            require_once ABSPATH.'wp-admin/includes/plugin.php';
         }
 
         $plugins = [];
@@ -261,10 +280,10 @@ class WP_Health_Check_Plugin
             $slug = strpos($file, '/') !== false ? dirname($file) : basename($file, '.php');
 
             $plugins[] = [
-                'slug'    => $slug,
-                'name'    => !empty($data['Name']) ? $data['Name'] : $slug,
+                'slug' => $slug,
+                'name' => ! empty($data['Name']) ? $data['Name'] : $slug,
                 'version' => isset($data['Version']) ? (string) $data['Version'] : '',
-                'active'  => is_plugin_active($file),
+                'active' => is_plugin_active($file),
             ];
         }
 
@@ -272,18 +291,18 @@ class WP_Health_Check_Plugin
         $in_use = [get_stylesheet(), get_template()];
         foreach (wp_get_themes() as $slug => $theme) {
             $themes[] = [
-                'slug'    => $slug,
-                'name'    => $theme->get('Name') ?: $slug,
+                'slug' => $slug,
+                'name' => $theme->get('Name') ?: $slug,
                 'version' => (string) $theme->get('Version'),
                 // A child theme's parent is in use too.
-                'active'  => in_array($slug, $in_use, true),
+                'active' => in_array($slug, $in_use, true),
             ];
         }
 
         return [
-            'core'    => ['version' => get_bloginfo('version')],
+            'core' => ['version' => get_bloginfo('version')],
             'plugins' => $plugins,
-            'themes'  => $themes,
+            'themes' => $themes,
         ];
     }
 
@@ -299,84 +318,177 @@ class WP_Health_Check_Plugin
      * would append a deprecation notice to debug.log on every poll.
      *
      * Each entry is {bytes, status}. `bytes` is null unless status is "ok".
-     * Results are cached by WordPress in the `dirsize_cache` transient, so it's
-     * the first walk that's expensive, not every request.
+     *
+     * Every poll measures anew. WordPress keeps the sizes it has walked in
+     * its `dirsize_cache` transient for ten years, and clears a folder from
+     * it only when a file is uploaded to or deleted from the media library
+     * below it: read from there, plugins, themes and anything written
+     * outside the media library (backups, caches, logs) kept the size of the
+     * first poll for good. So recurse_dirsize() is given a cache of our own,
+     * which it then uses in place of the transient.
+     *
+     * A site too large to walk within one request's time is walked over
+     * several: what a walk cut short had measured is kept (SIZES_CACHE) for
+     * the next poll to go on from, for up to SIZES_KEPT, after which the
+     * walk begins again, so nothing measured then is given out for good.
+     * While such a walk is still under way, the poll answers with the last
+     * one that went all the way (SIZES_LAST), as long as it is no older than
+     * that either: going on from a walk only until it was through, and then
+     * from nothing, a site that took two requests to walk had no sizes every
+     * other day.
      */
     private function sizes_report()
     {
         $upload_dir = wp_get_upload_dir();
 
         // No trailing slashes — recurse_dirsize compares raw path strings.
-        $paths = array(
+        $paths = [
             'wordpress_size' => untrailingslashit(ABSPATH),
-            'themes_size'    => get_theme_root(),
-            'plugins_size'   => WP_PLUGIN_DIR,
-            'uploads_size'   => $upload_dir['basedir'],
-        );
+            'themes_size' => untrailingslashit(get_theme_root()),
+            'plugins_size' => untrailingslashit(WP_PLUGIN_DIR),
+            'uploads_size' => untrailingslashit($upload_dir['basedir']),
+        ];
 
         if (function_exists('wp_get_font_dir')) {
             $font_dir = wp_get_font_dir();
-            if (!empty($font_dir['basedir'])) {
-                $paths['fonts_size'] = $font_dir['basedir'];
+            if (! empty($font_dir['basedir'])) {
+                $paths['fonts_size'] = untrailingslashit($font_dir['basedir']);
             }
         }
 
-        // The WordPress total walks ABSPATH but skips the directories measured
-        // separately below, so nothing is counted twice.
-        $exclude = $paths;
-        unset($exclude['wordpress_size']);
-        $exclude = array_values($exclude);
-
-        $budget = $this->size_time_budget();
-        $report = array();
-        $total  = 0;
+        // Each walk skips the directories measured separately that lie inside
+        // it, so nothing is counted twice: the WordPress total walks ABSPATH
+        // without themes, plugins and uploads, and uploads is walked without
+        // the fonts folder, which has been inside it since WordPress 6.5.
+        $exclude = [];
 
         foreach ($paths as $name => $path) {
-            if (!is_dir($path)) {
-                $report[$name] = array('bytes' => 0, 'status' => 'missing');
+            $exclude[$name] = [];
+
+            foreach ($paths as $other => $inner) {
+                if ($other !== $name && strpos($inner.'/', $path.'/') === 0 && $inner !== $path) {
+                    $exclude[$name][] = $inner;
+                }
+            }
+        }
+
+        // What a walk cut short had measured, by entry. One cache an entry:
+        // recurse_dirsize() looks a folder up in the cache it is given before
+        // it asks whether to skip it, so a folder measured for one entry and
+        // found in the cache of the walk around it was counted in both.
+        // That is what the shared transient did after every media upload:
+        // plugins and themes went into the WordPress size as well, and into
+        // the total twice.
+        $progress = get_transient(self::SIZES_CACHE);
+        $resumed = is_array($progress) && isset($progress['started'], $progress['caches'])
+            && is_int($progress['started']) && is_array($progress['caches'])
+            && $progress['started'] >= time() - self::SIZES_KEPT;
+        $started = $resumed ? $progress['started'] : time();
+        $caches = $resumed ? $progress['caches'] : [];
+
+        $budget = $this->size_time_budget();
+        $report = [];
+        $total = 0;
+        $cut_short = false;
+
+        foreach ($paths as $name => $path) {
+            if (! is_dir($path)) {
+                $report[$name] = ['bytes' => 0, 'status' => 'missing'];
+
                 continue;
             }
 
             if (microtime(true) - WP_START_TIMESTAMP >= $budget) {
-                $report[$name] = array('bytes' => null, 'status' => 'timeout');
+                $report[$name] = ['bytes' => null, 'status' => 'timeout'];
                 $total = null;
+                $cut_short = true;
+
                 continue;
             }
 
-            $size = recurse_dirsize($path, ('wordpress_size' === $name ? $exclude : null), $budget);
+            $cache = isset($caches[$name]) && is_array($caches[$name]) ? $caches[$name] : [];
+            $size = recurse_dirsize($path, $exclude[$name], $budget, $cache);
+            $caches[$name] = $cache;
 
-            if (false === $size) {
+            if ($size === false) {
                 // Unreadable — usually a permissions problem.
-                $report[$name] = array('bytes' => null, 'status' => 'unreadable');
+                $report[$name] = ['bytes' => null, 'status' => 'unreadable'];
                 $total = null;
+
                 continue;
             }
 
-            if (null === $size) {
-                $report[$name] = array('bytes' => null, 'status' => 'timeout');
+            if ($size === null) {
+                $report[$name] = ['bytes' => null, 'status' => 'timeout'];
                 $total = null;
+                $cut_short = true;
+
                 continue;
             }
 
-            $report[$name] = array('bytes' => (int) $size, 'status' => 'ok');
+            $report[$name] = ['bytes' => (int) $size, 'status' => 'ok'];
 
-            if (null !== $total) {
+            if ($total !== null) {
                 $total += (int) $size;
             }
+        }
+
+        if ($cut_short) {
+            set_transient(self::SIZES_CACHE, [
+                'started' => $started,
+                'caches' => array_map([$this, 'measured_so_far'], $caches),
+            ], self::SIZES_KEPT);
+
+            $last = get_transient(self::SIZES_LAST);
+
+            if (is_array($last) && isset($last['at'], $last['report']) && is_int($last['at']) && is_array($last['report'])
+                && $last['at'] >= time() - self::SIZES_KEPT) {
+                return $last['report'];
+            }
+        } else {
+            delete_transient(self::SIZES_CACHE);
         }
 
         $database = $this->database_size();
 
         $report['database_size'] = $database > 0
-            ? array('bytes' => $database, 'status' => 'ok')
-            : array('bytes' => null, 'status' => 'unavailable');
+            ? ['bytes' => $database, 'status' => 'ok']
+            : ['bytes' => null, 'status' => 'unavailable'];
 
         // A total is only meaningful once every part of it is known.
-        $report['total_size'] = (null !== $total && $database > 0)
-            ? array('bytes' => $total + $database, 'status' => 'ok')
-            : array('bytes' => null, 'status' => 'unavailable');
+        $report['total_size'] = ($total !== null && $database > 0)
+            ? ['bytes' => $total + $database, 'status' => 'ok']
+            : ['bytes' => null, 'status' => 'unavailable'];
+
+        if ($report['total_size']['status'] === 'ok') {
+            // Dated from when the walk began: what it went on from was
+            // measured then, not when it got through.
+            set_transient(self::SIZES_LAST, ['at' => $started, 'report' => $report], self::SIZES_KEPT);
+        }
 
         return $report;
+    }
+
+    /**
+     * Of a walk's cache, what the next poll needs to go on from where this
+     * one stopped: the folders measured whole whose parent was not. The
+     * rest (every folder below those, and the ones the walk stopped in) is
+     * left out, so a site with a hundred thousand folders does not keep a
+     * row that size.
+     */
+    private function measured_so_far($cache)
+    {
+        $kept = [];
+
+        foreach (is_array($cache) ? $cache : [] as $directory => $size) {
+            $parent = dirname($directory);
+
+            if (is_int($size) && ! (isset($cache[$parent]) && is_int($cache[$parent]))) {
+                $kept[$directory] = $size;
+            }
+        }
+
+        return $kept;
     }
 
     /**
@@ -426,7 +538,7 @@ class WP_Health_Check_Plugin
     {
         // If we got this far, WP core, plugins, and theme all loaded without a fatal.
         return [
-            'ok'      => true,
+            'ok' => true,
             'message' => 'WordPress core loaded successfully.',
         ];
     }
@@ -435,31 +547,40 @@ class WP_Health_Check_Plugin
     {
         global $wpdb;
 
-        $result = $wpdb->get_var("SELECT 1");
+        $result = $wpdb->get_var('SELECT 1');
 
         if ($result !== '1') {
             return [
-                'ok'      => false,
+                'ok' => false,
                 'message' => 'Database query failed.',
-                'error'   => $wpdb->last_error,
+                'error' => $wpdb->last_error,
             ];
         }
 
         return [
-            'ok'      => true,
+            'ok' => true,
             'message' => 'Database connection healthy.',
         ];
     }
 
     private function check_disk_space()
     {
+        // A host can switch these off (disable_functions), and then calling
+        // them is a fatal error, not a false.
+        if (! function_exists('disk_free_space') || ! function_exists('disk_total_space')) {
+            return [
+                'ok' => true,
+                'message' => 'Disk space info unavailable on this host.',
+            ];
+        }
+
         $path = ABSPATH;
-        $free  = @disk_free_space($path);
+        $free = @disk_free_space($path);
         $total = @disk_total_space($path);
 
-        if ($free === false || $total === false || $total === 0) {
+        if ($free === false || $total === false || ! $total) {
             return [
-                'ok'      => true, // don't fail the whole check if the host disallows this
+                'ok' => true, // don't fail the whole check if the host disallows this
                 'message' => 'Disk space info unavailable on this host.',
             ];
         }
@@ -468,22 +589,22 @@ class WP_Health_Check_Plugin
         $ok = $free_percent > 5.0; // alert if less than 5% free
 
         return [
-            'ok'           => $ok,
+            'ok' => $ok,
             'free_percent' => $free_percent,
-            'free_bytes'   => $free,
-            'message'      => $ok ? 'Sufficient disk space.' : 'Low disk space.',
+            'free_bytes' => $free,
+            'message' => $ok ? 'Sufficient disk space.' : 'Low disk space.',
         ];
     }
 
     private function check_memory()
     {
         $limit_str = ini_get('memory_limit');
-        $usage     = memory_get_usage(true);
+        $usage = memory_get_usage(true);
         $limit_bytes = $this->to_bytes($limit_str);
 
         if ($limit_bytes <= 0) {
             return [
-                'ok'      => true,
+                'ok' => true,
                 'message' => 'Memory limit unbounded or unavailable.',
             ];
         }
@@ -492,10 +613,10 @@ class WP_Health_Check_Plugin
         $ok = $usage_percent < 90.0;
 
         return [
-            'ok'             => $ok,
-            'usage_percent'  => $usage_percent,
-            'limit'          => $limit_str,
-            'message'        => $ok ? 'Memory usage normal.' : 'High memory usage.',
+            'ok' => $ok,
+            'usage_percent' => $usage_percent,
+            'limit' => $limit_str,
+            'message' => $ok ? 'Memory usage normal.' : 'High memory usage.',
         ];
     }
 
@@ -507,7 +628,7 @@ class WP_Health_Check_Plugin
         }
 
         $unit = strtolower(substr($val, -1));
-        $num  = (int) $val;
+        $num = (int) $val;
 
         switch ($unit) {
             case 'g': return $num * 1024 * 1024 * 1024;
@@ -537,13 +658,13 @@ class WP_Health_Check_Plugin
         $out = [];
         foreach ($info as $section => $details) {
             // Skip empty or private sections, matching WordPress's copy output.
-            if (empty($details['fields']) || !empty($details['private'])) {
+            if (empty($details['fields']) || ! empty($details['private'])) {
                 continue;
             }
 
             $fields = [];
             foreach ($details['fields'] as $key => $field) {
-                if (!empty($field['private'])) {
+                if (! empty($field['private'])) {
                     continue;
                 }
                 // Prefer the concise, untranslated "debug" value when present.
@@ -565,12 +686,12 @@ class WP_Health_Check_Plugin
     private function get_debug_data()
     {
         foreach (['plugin.php', 'update.php', 'misc.php', 'file.php', 'class-wp-debug-data.php'] as $inc) {
-            if (file_exists(ABSPATH . 'wp-admin/includes/' . $inc)) {
-                require_once ABSPATH . 'wp-admin/includes/' . $inc;
+            if (file_exists(ABSPATH.'wp-admin/includes/'.$inc)) {
+                require_once ABSPATH.'wp-admin/includes/'.$inc;
             }
         }
 
-        if (!class_exists('WP_Debug_Data') || !method_exists('WP_Debug_Data', 'debug_data')) {
+        if (! class_exists('WP_Debug_Data') || ! method_exists('WP_Debug_Data', 'debug_data')) {
             return null;
         }
 
@@ -592,11 +713,13 @@ class WP_Health_Check_Plugin
             foreach ($value as $k => $v) {
                 $nested[$k] = is_bool($v) ? $v : (string) $v;
             }
+
             return $nested;
         }
         if ($value === '' || $value === null) {
             return 'undefined';
         }
+
         return $value;
     }
 
@@ -615,7 +738,7 @@ class WP_Health_Check_Plugin
      */
     private function woocommerce_report()
     {
-        if (!class_exists('WooCommerce') || !function_exists('WC') || !function_exists('wc_get_orders')) {
+        if (! class_exists('WooCommerce') || ! function_exists('WC') || ! function_exists('wc_get_orders')) {
             return null;
         }
 
@@ -673,7 +796,7 @@ class WP_Health_Check_Plugin
     private function shop_gateways()
     {
         $gateways = WC()->payment_gateways();
-        if (!is_object($gateways) || !method_exists($gateways, 'payment_gateways')) {
+        if (! is_object($gateways) || ! method_exists($gateways, 'payment_gateways')) {
             return [];
         }
 
@@ -681,7 +804,7 @@ class WP_Health_Check_Plugin
         $testing = [];
 
         foreach ((array) $gateways->payment_gateways() as $gateway) {
-            if (!is_object($gateway) || !isset($gateway->enabled) || $gateway->enabled !== 'yes' || empty($gateway->id)) {
+            if (! is_object($gateway) || ! isset($gateway->enabled) || $gateway->enabled !== 'yes' || empty($gateway->id)) {
                 continue;
             }
 
@@ -701,7 +824,7 @@ class WP_Health_Check_Plugin
             return true;
         }
 
-        if (!method_exists($gateway, 'get_option')) {
+        if (! method_exists($gateway, 'get_option')) {
             return false;
         }
 
@@ -730,29 +853,32 @@ class WP_Health_Check_Plugin
     private function shop_orders()
     {
         $through = ['processing', 'on-hold', 'completed'];
-        $since   = '>' . (time() - DAY_IN_SECONDS);
-        $out     = [];
+        $since = '>'.(time() - DAY_IN_SECONDS);
+        $out = [];
 
         $last = wc_get_orders(['type' => 'shop_order', 'status' => $through, 'limit' => 1, 'orderby' => 'date', 'order' => 'DESC']);
         $out['last_order_at'] = $this->order_time(is_array($last) && $last ? reset($last) : null);
-        $out['orders_24h']    = $this->order_count(['status' => $through, 'date_created' => $since]);
+        $out['orders_24h'] = $this->order_count(['status' => $through, 'date_created' => $since]);
 
-        $failed  = (array) wc_get_orders(['type' => 'shop_order', 'status' => ['failed'], 'date_created' => $since, 'limit' => 200, 'orderby' => 'date', 'order' => 'DESC']);
+        $failed = (array) wc_get_orders(['type' => 'shop_order', 'status' => ['failed'], 'date_created' => $since, 'limit' => 200, 'orderby' => 'date', 'order' => 'DESC']);
         $by_gate = [];
         foreach ($failed as $order) {
             $gateway = is_object($order) && method_exists($order, 'get_payment_method') ? (string) $order->get_payment_method() : '';
             $gateway = $gateway !== '' ? $gateway : 'unknown';
             $by_gate[$gateway] = (isset($by_gate[$gateway]) ? $by_gate[$gateway] : 0) + 1;
         }
-        $out['orders_failed_24h']            = count($failed);
+        // Counted, not the orders fetched: those stop at 200, which a shop
+        // whose payments have all begun failing passes in hours.
+        $total = $this->order_count(['status' => ['failed'], 'date_created' => $since]);
+        $out['orders_failed_24h'] = is_int($total) ? $total : count($failed);
         $out['orders_failed_24h_by_gateway'] = $by_gate;
 
         foreach (['pending', 'on-hold', 'processing'] as $status) {
-            $key    = 'orders_' . str_replace('-', '_', $status);
+            $key = 'orders_'.str_replace('-', '_', $status);
             $oldest = wc_get_orders(['type' => 'shop_order', 'status' => [$status], 'limit' => 1, 'orderby' => 'date', 'order' => 'ASC']);
 
-            $out[$key]                = $this->order_count(['status' => [$status]]);
-            $out[$key . '_oldest_at'] = $this->order_time(is_array($oldest) && $oldest ? reset($oldest) : null);
+            $out[$key] = $this->order_count(['status' => [$status]]);
+            $out[$key.'_oldest_at'] = $this->order_time(is_array($oldest) && $oldest ? reset($oldest) : null);
         }
 
         return $out;
@@ -767,7 +893,7 @@ class WP_Health_Check_Plugin
 
     private function order_time($order)
     {
-        if (!is_object($order) || !method_exists($order, 'get_date_created')) {
+        if (! is_object($order) || ! method_exists($order, 'get_date_created')) {
             return 'undefined';
         }
 
@@ -783,7 +909,7 @@ class WP_Health_Check_Plugin
      */
     private function shop_queue()
     {
-        if (!class_exists('ActionScheduler') || !class_exists('ActionScheduler_Store') || !function_exists('as_get_datetime_object')) {
+        if (! class_exists('ActionScheduler') || ! class_exists('ActionScheduler_Store') || ! function_exists('as_get_datetime_object')) {
             return [];
         }
 
@@ -791,13 +917,13 @@ class WP_Health_Check_Plugin
 
         return [
             'scheduled_actions_past_due' => (int) $store->query_actions([
-                'status'       => ActionScheduler_Store::STATUS_PENDING,
-                'date'         => as_get_datetime_object('1 hour ago'),
+                'status' => ActionScheduler_Store::STATUS_PENDING,
+                'date' => as_get_datetime_object('1 hour ago'),
                 'date_compare' => '<=',
             ], 'count'),
             'scheduled_actions_failed_24h' => (int) $store->query_actions([
-                'status'           => ActionScheduler_Store::STATUS_FAILED,
-                'modified'         => as_get_datetime_object('24 hours ago'),
+                'status' => ActionScheduler_Store::STATUS_FAILED,
+                'modified' => as_get_datetime_object('24 hours ago'),
                 'modified_compare' => '>=',
             ], 'count'),
         ];
@@ -810,22 +936,22 @@ class WP_Health_Check_Plugin
      */
     private function shop_templates()
     {
-        $status = WC()->plugin_path() . '/includes/admin/class-wc-admin-status.php';
-        if (!class_exists('WC_Admin_Status') && file_exists($status)) {
+        $status = WC()->plugin_path().'/includes/admin/class-wc-admin-status.php';
+        if (! class_exists('WC_Admin_Status') && file_exists($status)) {
             include_once $status;
         }
 
-        if (!class_exists('WC_Admin_Status') || !method_exists('WC_Admin_Status', 'scan_template_files') || !method_exists('WC_Admin_Status', 'get_file_version')) {
+        if (! class_exists('WC_Admin_Status') || ! method_exists('WC_Admin_Status', 'scan_template_files') || ! method_exists('WC_Admin_Status', 'get_file_version')) {
             return [];
         }
 
-        $core     = WC()->plugin_path() . '/templates/';
-        $path     = WC()->template_path();
+        $core = WC()->plugin_path().'/templates/';
+        $path = WC()->template_path();
         $outdated = [];
 
         foreach ((array) WC_Admin_Status::scan_template_files($core) as $file) {
             $theirs = null;
-            foreach ([get_stylesheet_directory() . '/' . $file, get_stylesheet_directory() . '/' . $path . $file, get_template_directory() . '/' . $file, get_template_directory() . '/' . $path . $file] as $candidate) {
+            foreach ([get_stylesheet_directory().'/'.$file, get_stylesheet_directory().'/'.$path.$file, get_template_directory().'/'.$file, get_template_directory().'/'.$path.$file] as $candidate) {
                 if (file_exists($candidate)) {
                     $theirs = $candidate;
                     break;
@@ -836,7 +962,7 @@ class WP_Health_Check_Plugin
                 continue;
             }
 
-            $core_version  = WC_Admin_Status::get_file_version($core . $file);
+            $core_version = WC_Admin_Status::get_file_version($core.$file);
             $theme_version = WC_Admin_Status::get_file_version($theirs);
 
             if ($core_version && (empty($theme_version) || version_compare($theme_version, $core_version, '<'))) {
@@ -853,7 +979,7 @@ class WP_Health_Check_Plugin
      */
     private function shop_stock()
     {
-        if (get_option('woocommerce_manage_stock') !== 'yes' || !function_exists('wc_get_products')) {
+        if (get_option('woocommerce_manage_stock') !== 'yes' || ! function_exists('wc_get_products')) {
             return [];
         }
 
@@ -865,9 +991,9 @@ class WP_Health_Check_Plugin
             $out['products_out_of_stock'] = (int) $none->total;
         }
 
-        if (!empty($wpdb->wc_product_meta_lookup)) {
+        if (! empty($wpdb->wc_product_meta_lookup)) {
             $low = max(1, absint(get_option('woocommerce_notify_low_stock_amount', 2)));
-            $no  = absint(get_option('woocommerce_notify_no_stock_amount', 0));
+            $no = absint(get_option('woocommerce_notify_no_stock_amount', 0));
 
             $out['products_low_stock'] = (int) $wpdb->get_var($wpdb->prepare(
                 "SELECT COUNT(*) FROM {$wpdb->wc_product_meta_lookup} lookup
@@ -888,7 +1014,7 @@ class WP_Health_Check_Plugin
      */
     private function shop_webhooks()
     {
-        if (!class_exists('WC_Data_Store')) {
+        if (! class_exists('WC_Data_Store')) {
             return [];
         }
 
@@ -915,7 +1041,7 @@ class WP_Health_Check_Plugin
      */
     private function refresh_update_lists()
     {
-        if (!function_exists('wp_update_plugins') || !function_exists('wp_update_themes')) {
+        if (! function_exists('wp_update_plugins') || ! function_exists('wp_update_themes')) {
             return;
         }
 
@@ -943,7 +1069,7 @@ class WP_Health_Check_Plugin
         $forget = [];
         foreach (['update_plugins', 'update_themes'] as $transient) {
             $forget[$transient] = function ($list) use (&$forget, $transient) {
-                remove_filter('site_transient_' . $transient, $forget[$transient], PHP_INT_MAX);
+                remove_filter('site_transient_'.$transient, $forget[$transient], PHP_INT_MAX);
 
                 if (is_object($list)) {
                     $list = clone $list;
@@ -965,7 +1091,7 @@ class WP_Health_Check_Plugin
                     continue;
                 }
 
-                add_filter('site_transient_' . $transient, $forget[$transient], PHP_INT_MAX);
+                add_filter('site_transient_'.$transient, $forget[$transient], PHP_INT_MAX);
                 $check();
             }
         } catch (Throwable $e) {
@@ -978,7 +1104,7 @@ class WP_Health_Check_Plugin
             }
 
             foreach ($forget as $transient => $callback) {
-                remove_filter('site_transient_' . $transient, $callback, PHP_INT_MAX);
+                remove_filter('site_transient_'.$transient, $callback, PHP_INT_MAX);
             }
             remove_filter('http_request_args', $limit, PHP_INT_MAX);
             remove_filter('pre_http_request', $cutoff, PHP_INT_MAX);
@@ -1006,8 +1132,8 @@ class WP_Health_Check_Plugin
      */
     public function note_update_check($response, $context, $class, $args, $url)
     {
-        if ($context !== 'response' || !is_string($url)
-            || !preg_match('#^https?://api\.wordpress\.org/(plugins|themes)/update-check/#', $url, $match)) {
+        if ($context !== 'response' || ! is_string($url)
+            || ! preg_match('#^https?://api\.wordpress\.org/(plugins|themes)/update-check/#', $url, $match)) {
             return;
         }
 
@@ -1060,7 +1186,7 @@ class WP_Health_Check_Plugin
 
             $report[$kind] = [
                 'checked_at' => $at ? gmdate('Y-m-d H:i:s', $at) : null,
-                'error'      => $error,
+                'error' => $error,
             ];
         }
 
@@ -1085,17 +1211,17 @@ class WP_Health_Check_Plugin
         }
 
         return [
-            'slug'         => $this->slug(),
-            'version'      => $release['version'],
-            'url'          => self::UPDATE_URI,
-            'package'      => $release['package'],
-            'requires'     => $release['requires'],
+            'slug' => $this->slug(),
+            'version' => $release['version'],
+            'url' => self::UPDATE_URI,
+            'package' => $release['package'],
+            'requires' => $release['requires'],
             'requires_php' => $release['requires_php'],
-            'tested'       => $this->tested($release['tested']),
-            'icons'        => $this->icons(),
+            'tested' => $this->tested($release['tested']),
+            'icons' => $this->icons(),
             // Carried to the download, which checks them again.
-            'sha256'       => $release['sha256'],
-            'signature'    => $release['signature'],
+            'sha256' => $release['sha256'],
+            'signature' => $release['signature'],
         ];
     }
 
@@ -1107,17 +1233,17 @@ class WP_Health_Check_Plugin
     public function download_update($reply, $package, $upgrader, $hook_extra = [])
     {
         $ours = ($hook_extra['plugin'] ?? null) === plugin_basename(__FILE__)
-            || (is_string($package) && strpos($package, self::UPDATE_URI . '/releases/download/') === 0);
+            || (is_string($package) && strpos($package, self::UPDATE_URI.'/releases/download/') === 0);
 
-        if ($reply !== false || !$ours) {
+        if ($reply !== false || ! $ours) {
             return $reply;
         }
 
         $updates = get_site_transient('update_plugins');
         $offer = is_object($updates) && isset($updates->response[plugin_basename(__FILE__)]) ? $updates->response[plugin_basename(__FILE__)] : null;
 
-        if (!is_string($package) || !is_object($offer) || ($offer->package ?? null) !== $package
-            || !$this->is_signed((string) ($offer->new_version ?? ''), (string) ($offer->sha256 ?? ''), (string) ($offer->signature ?? ''))) {
+        if (! is_string($package) || ! is_object($offer) || ($offer->package ?? null) !== $package
+            || ! $this->is_signed((string) ($offer->new_version ?? ''), (string) ($offer->sha256 ?? ''), (string) ($offer->signature ?? ''))) {
             return new WP_Error('spottlab_unsigned', 'This Spottlab connector update is not signed by Spottlab, so it was not installed.');
         }
 
@@ -1127,7 +1253,7 @@ class WP_Health_Check_Plugin
             return $file;
         }
 
-        if (!hash_equals($offer->sha256, (string) hash_file('sha256', $file))) {
+        if (! hash_equals($offer->sha256, (string) hash_file('sha256', $file))) {
             @unlink($file);
 
             return new WP_Error('spottlab_tampered', 'The Spottlab connector download does not match its signed release, so it was not installed.');
@@ -1150,7 +1276,7 @@ class WP_Health_Check_Plugin
             return $source;
         }
 
-        $target = trailingslashit($remote_source) . $folder . '/';
+        $target = trailingslashit($remote_source).$folder.'/';
 
         return $wp_filesystem && $wp_filesystem->move($source, $target) ? $target : new WP_Error('spottlab_folder', 'The Spottlab connector update could not be put in place.');
     }
@@ -1168,18 +1294,18 @@ class WP_Health_Check_Plugin
         $release = $this->latest_release();
 
         return (object) [
-            'name'          => 'Spottlab connector',
-            'slug'          => $this->slug(),
-            'version'       => $release['version'] ?? self::VERSION,
-            'author'        => '<a href="https://spottlab.com">Spottlab</a>',
-            'homepage'      => self::UPDATE_URI,
-            'requires'      => $release['requires'] ?? '',
-            'requires_php'  => $release['requires_php'] ?? '',
-            'tested'        => $release['tested'] ?? '',
+            'name' => 'Spottlab connector',
+            'slug' => $this->slug(),
+            'version' => $release['version'] ?? self::VERSION,
+            'author' => '<a href="https://spottlab.com">Spottlab</a>',
+            'homepage' => self::UPDATE_URI,
+            'requires' => $release['requires'] ?? '',
+            'requires_php' => $release['requires_php'] ?? '',
+            'tested' => $release['tested'] ?? '',
             'download_link' => $release['package'] ?? '',
-            'sections'      => [
+            'sections' => [
                 'description' => '<p>Connects this site to <a href="https://spottlab.com">Spottlab</a>, so you hear as soon as it goes down, needs an update or is at risk.</p>',
-                'changelog'   => '<p><a href="' . esc_url(self::UPDATE_URI . '/releases') . '">What changed, release by release</a></p>',
+                'changelog' => '<p><a href="'.esc_url(self::UPDATE_URI.'/releases').'">What changed, release by release</a></p>',
             ],
         ];
     }
@@ -1203,7 +1329,7 @@ class WP_Health_Check_Plugin
         }
 
         foreach ($versions as $version) {
-            if ($branch !== '' && strpos($version . '.', $branch . '.') === 0 && version_compare($version, $tested, '>')) {
+            if ($branch !== '' && strpos($version.'.', $branch.'.') === 0 && version_compare($version, $tested, '>')) {
                 $tested = $version;
             }
         }
@@ -1218,7 +1344,7 @@ class WP_Health_Check_Plugin
      */
     private function icons()
     {
-        return is_file(__DIR__ . '/icon.svg') ? ['svg' => plugins_url('icon.svg', __FILE__)] : [];
+        return is_file(__DIR__.'/icon.svg') ? ['svg' => plugins_url('icon.svg', __FILE__)] : [];
     }
 
     /**
@@ -1245,24 +1371,24 @@ class WP_Health_Check_Plugin
         }
 
         $release = null;
-        $response = wp_remote_get(self::UPDATE_URI . '/releases/latest/download/update.json', ['timeout' => 10]);
+        $response = wp_remote_get(self::UPDATE_URI.'/releases/latest/download/update.json', ['timeout' => 10]);
 
-        if (!is_wp_error($response) && (int) wp_remote_retrieve_response_code($response) === 200) {
+        if (! is_wp_error($response) && (int) wp_remote_retrieve_response_code($response) === 200) {
             $data = json_decode(wp_remote_retrieve_body($response), true);
 
             if (is_array($data)
                 && is_string($data['version'] ?? null) && preg_match('/^\d+\.\d+\.\d+$/', $data['version'])
-                && is_string($data['package'] ?? null) && $data['package'] === self::UPDATE_URI . '/releases/download/' . $data['version'] . '/spottlab-connector.zip'
+                && is_string($data['package'] ?? null) && $data['package'] === self::UPDATE_URI.'/releases/download/'.$data['version'].'/spottlab-connector.zip'
                 && is_string($data['sha256'] ?? null) && is_string($data['signature'] ?? null)
                 && $this->is_signed($data['version'], $data['sha256'], $data['signature'])) {
                 $release = [
-                    'version'      => $data['version'],
-                    'package'      => $data['package'],
-                    'sha256'       => $data['sha256'],
-                    'signature'    => $data['signature'],
-                    'requires'     => is_string($data['requires'] ?? null) ? $data['requires'] : '',
+                    'version' => $data['version'],
+                    'package' => $data['package'],
+                    'sha256' => $data['sha256'],
+                    'signature' => $data['signature'],
+                    'requires' => is_string($data['requires'] ?? null) ? $data['requires'] : '',
                     'requires_php' => is_string($data['requires_php'] ?? null) ? $data['requires_php'] : '',
-                    'tested'       => is_string($data['tested'] ?? null) ? $data['tested'] : '',
+                    'tested' => is_string($data['tested'] ?? null) ? $data['tested'] : '',
                 ];
             }
         }
@@ -1278,7 +1404,7 @@ class WP_Health_Check_Plugin
      */
     private function is_signed($version, $sha256, $signature)
     {
-        if (!preg_match('/^[a-f0-9]{64}$/', $sha256) || !function_exists('sodium_crypto_sign_verify_detached')) {
+        if (! preg_match('/^[a-f0-9]{64}$/', $sha256) || ! function_exists('sodium_crypto_sign_verify_detached')) {
             return false;
         }
 
@@ -1289,7 +1415,7 @@ class WP_Health_Check_Plugin
         }
 
         try {
-            return sodium_crypto_sign_verify_detached($signature, "spottlab-connector\n" . $version . "\n" . $sha256, base64_decode(self::UPDATE_KEY));
+            return sodium_crypto_sign_verify_detached($signature, "spottlab-connector\n".$version."\n".$sha256, base64_decode(self::UPDATE_KEY));
         } catch (Throwable $e) {
             return false;
         }
@@ -1311,15 +1437,15 @@ class WP_Health_Check_Plugin
     public function register_settings()
     {
         register_setting('health_check_api', self::OPTION_TOKEN, [
-            'type'              => 'string',
+            'type' => 'string',
             'sanitize_callback' => 'sanitize_text_field',
-            'default'           => '',
+            'default' => '',
         ]);
     }
 
     public function render_settings_page()
     {
-        if (!current_user_can('manage_options')) {
+        if (! current_user_can('manage_options')) {
             return;
         }
 
@@ -1348,4 +1474,4 @@ class WP_Health_Check_Plugin
     }
 }
 
-new WP_Health_Check_Plugin();
+new WP_Health_Check_Plugin;
