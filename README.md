@@ -1,8 +1,10 @@
 # Spottlab connector for WordPress
 
-Connects your WordPress site to [Spottlab](https://spottlab.com), so you hear as soon as it goes down, needs an update or is at risk. It answers only Spottlab, holding your site's token, and changes nothing on the site.
+Connects your WordPress site to [Spottlab](https://spottlab.com), so you hear as soon as it goes down, needs an update or is at risk. It answers only Spottlab, holding your site's token, and changes nothing on the site. The one thing it does besides reading is the email check below, and only when you ask Spottlab for it.
 
 ## Install
+
+It needs WordPress 5.8 and PHP 7.2 or newer. From 1.6.1 the plugin says so in its header, so WordPress will not install it, or update to it, on an older PHP.
 
 1. Download `spottlab-connector.zip` from the [latest release](https://github.com/Spottlab/wordpress-connector/releases/latest), or from the Connectors page in Spottlab.
 2. In WordPress, open Plugins → Add New Plugin → Upload Plugin, choose the zip and activate it.
@@ -47,9 +49,27 @@ It reports counts, times and settings only:
 - how many products are out of stock or low on it, where the shop keeps stock;
 - the file names of the theme's WooCommerce templates that are out of date.
 
-It never reports an order itself: not what was bought, what it came to, or who bought it. Like everything else here, it only reads.
+It never reports an order itself: not what was bought, what it came to, or who bought it. Like the rest of the report, it only reads.
 
 Test mode is asked of each gateway in the usual ways gateways keep that setting, so a gateway that keeps it some other way is not noticed. A live gateway is never reported as testing.
+
+## Email check
+
+From 1.6.0, the site can send a test email when Spottlab asks for one, so you hear when it stops sending email: an SMTP password or API key that expired, or a mail server that refuses the site. Spottlab asks only for Pro sites where you set up a workflow with the "Emails not sending" trigger: once a day, and hourly while sending fails.
+
+The plugin sends the email with `wp_mail()`, through whatever sends your site's email (WP Mail SMTP, FluentSMTP, PHP's `mail()` and so on), and tells Spottlab whether WordPress handed it on, and the error if not. It shows in your SMTP plugin's email log like any other email.
+
+What Spottlab can ask for is fixed in the plugin:
+
+- the email always goes to `smtp-check@spottlab.com`, written in the plugin and never taken from the request;
+- the subject and text are the plugin's own. The only thing Spottlab sends is a check code of 32 hex digits, put in the text and in an `X-Spottlab-Check` header;
+- the plugin sends at most one in 50 minutes, however often it is asked.
+
+So even someone who got into Spottlab could only make your site send that one email, to Spottlab, a little more than once an hour. "Handed on" is all this check knows: it cannot see whether the email arrived. With PHP's `mail()`, WordPress hands every email on, so a site without an SMTP plugin passes even when its email goes nowhere.
+
+## Removing it
+
+From 1.6.1, deleting the plugin (Plugins → Delete, or `wp plugin uninstall`) removes what it kept in the database: the token above all, so that installing it again later, or from a backup of the files, needs a token pasted again. With it go when it last sent a test email, the sizes it measured, and what it last heard of the update lists and of its own releases, on every site of a network. Deactivating it keeps them all. A must-use copy is removed by deleting the file, which WordPress does not see, so remove `health_check_api_token` from the options table yourself, or change the site's token in Spottlab.
 
 ## Checking a release yourself
 

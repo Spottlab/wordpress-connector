@@ -2,8 +2,9 @@
 /**
  * Plugin Name: Spottlab connector
  * Description: Connects this site to Spottlab, so you hear as soon as it goes down, needs an update or is at risk.
- * Version: 1.5.2
+ * Version: 1.6.2
  * Requires at least: 5.8
+ * Requires PHP: 7.2
  * Tested up to: 7.1
  * Author: Spottlab
  * Author URI: https://spottlab.com
@@ -15,7 +16,7 @@ if (! defined('ABSPATH')) {
 
 class WP_Health_Check_Plugin
 {
-    const VERSION = '1.5.2';
+    const VERSION = '1.6.2';
 
     const OPTION_TOKEN = 'health_check_api_token';
 
@@ -65,6 +66,28 @@ class WP_Health_Check_Plugin
      * (woocommerce_report), beside WordPress's own Site Health sections.
      */
     const SHOP_SECTION = 'spottlab-woocommerce';
+
+    /**
+     * Where the email check's test email goes (mail_check): Spottlab's own
+     * address, written here and never taken from a request. Whoever holds
+     * the token, Spottlab itself or someone who broke into it, can have the
+     * site send this one email, with nothing of theirs in it, to this
+     * address alone.
+     */
+    const MAIL_CHECK_TO = 'smtp-check@spottlab.com';
+
+    /** When the last test email was sent, as a Unix time (mail_check). */
+    const MAIL_CHECK_LAST = 'spottlab_connector_mail_check';
+
+    /**
+     * At most one test email in this long, in seconds, however often it is
+     * asked for. Spottlab asks once a day, and hourly while sending fails;
+     * a little under the hour, so that hourly retry is never refused.
+     */
+    const MAIL_CHECK_EVERY = 3000;
+
+    /** How long the mail server gets to answer a test email, in seconds. */
+    const MAIL_CHECK_TIMEOUT = 15;
 
     public function __construct()
     {
@@ -160,9 +183,9 @@ class WP_Health_Check_Plugin
     {
         $start = microtime(true);
 
-        $want_full = $this->flag_requested($request, ['full', 'verbose', 'diagnostics']);
-        $want_software = $this->flag_requested($request, ['software', 'security']);
-        $want_sizes = $this->flag_requested($request, ['sizes', 'disk']);
+        $want_full = $this->flag_requested($request, 'full');
+        $want_software = $this->flag_requested($request, 'software');
+        $want_sizes = $this->flag_requested($request, 'sizes');
 
         // Basic liveness always runs: is the page/database actually working?
         // If the mu-plugin executed, WP core + plugins + theme loaded without a
@@ -172,8 +195,6 @@ class WP_Health_Check_Plugin
 
         $payload = [
             'status' => $ok ? 'ok' : 'error',
-            'site' => home_url(),
-            'timestamp' => current_time('mysql', true),
             'connector_version' => self::VERSION,
         ];
 
@@ -230,6 +251,12 @@ class WP_Health_Check_Plugin
 
         $payload['response_ms'] = round((microtime(true) - $start) * 1000, 2);
 
+        // A test email, only when asked for with a check code. After the
+        // time is taken: what the mail server takes is not the site's.
+        if ($request->has_param('mail')) {
+            $payload['mail'] = $this->mail_check($request->get_param('mail'));
+        }
+
         $response = new WP_REST_Response($payload);
         $response->set_status($ok ? 200 : 503);
 
@@ -237,26 +264,98 @@ class WP_Health_Check_Plugin
     }
 
     /**
-     * True if any of the given query params is present and truthy
-     * (e.g. ?full=1, ?software=true, or a bare ?full).
+     * True if the query param is present and truthy (e.g. ?full=1,
+     * ?software=true, or a bare ?full).
      */
-    private function flag_requested(WP_REST_Request $request, array $names)
+    private function flag_requested(WP_REST_Request $request, $name)
     {
-        foreach ($names as $name) {
-            if (! $request->has_param($name)) {
-                continue;
-            }
-            $value = $request->get_param($name);
-            // A bare flag (?full) arrives as an empty string — treat as true.
-            if ($value === '' || $value === null) {
-                return true;
-            }
-            if (filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) !== false) {
-                return true;
-            }
+        if (! $request->has_param($name)) {
+            return false;
         }
 
-        return false;
+        $value = $request->get_param($name);
+
+        // A bare flag (?full) arrives as an empty string — treat as true.
+        return $value === '' || $value === null
+            || filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) !== false;
+    }
+
+    /* ---------------------- Email check ---------------------- */
+
+    /**
+     * Sends one test email through whatever sends this site's email (an
+     * SMTP plugin, or PHP's mail()), so Spottlab hears when it stops
+     * going: an SMTP password or API key that expired, a mail server that
+     * refuses the site. Says only whether WordPress handed it on, and why
+     * not when it did not.
+     *
+     * Nothing of the request goes into the email but the check code, held
+     * to 32 hex digits: the address is MAIL_CHECK_TO, the subject and the
+     * text are this plugin's. And one at most in MAIL_CHECK_EVERY, claimed
+     * in a single UPDATE, so requests landing together cannot each send.
+     *
+     * @return array{sent: ?bool, error?: string}
+     */
+    private function mail_check($code)
+    {
+        if (! is_string($code) || preg_match('/^[0-9a-f]{32}$/', $code) !== 1) {
+            return ['sent' => null];
+        }
+
+        global $wpdb;
+        $now = time();
+
+        // The row to claim, made the first time. Not autoloaded: it is
+        // read only here.
+        add_option(self::MAIL_CHECK_LAST, '0', '', 'no');
+
+        $claimed = $wpdb->query($wpdb->prepare(
+            "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND CAST(option_value AS UNSIGNED) <= %d",
+            (string) $now,
+            self::MAIL_CHECK_LAST,
+            $now - self::MAIL_CHECK_EVERY
+        ));
+        wp_cache_delete(self::MAIL_CHECK_LAST, 'options');
+
+        if ($claimed !== 1) {
+            return ['sent' => null];
+        }
+
+        $error = null;
+        $on_failure = function ($wp_error) use (&$error) {
+            $error = $wp_error instanceof WP_Error ? $wp_error->get_error_message() : 'The email could not be sent.';
+        };
+        // PHPMailer waits five minutes on a mail server by default; Spottlab
+        // waits 30 seconds for the answer.
+        $timeout = function ($phpmailer) {
+            $phpmailer->Timeout = self::MAIL_CHECK_TIMEOUT;
+        };
+
+        add_action('wp_mail_failed', $on_failure);
+        add_action('phpmailer_init', $timeout, PHP_INT_MAX);
+
+        try {
+            $sent = wp_mail(
+                self::MAIL_CHECK_TO,
+                'Spottlab email check',
+                "This is the Spottlab connector on ".home_url().", checking that the site can send email. Nothing needs doing.\n\nCheck code: ".$code."\n",
+                ['X-Spottlab-Check: '.$code]
+            );
+        } catch (Throwable $e) {
+            $sent = false;
+            $error = $e->getMessage();
+        } finally {
+            remove_action('wp_mail_failed', $on_failure);
+            remove_action('phpmailer_init', $timeout, PHP_INT_MAX);
+        }
+
+        if ($sent) {
+            return ['sent' => true];
+        }
+
+        $error = trim(wp_strip_all_tags((string) $error));
+
+        return ['sent' => false, 'error' => $error !== '' ? $error : 'WordPress could not send the email, and did not say why.'];
     }
 
     /* ---------------------- Installed software ---------------------- */
@@ -650,13 +749,8 @@ class WP_Health_Check_Plugin
      */
     private function site_health_report()
     {
-        $info = $this->get_debug_data();
-        if ($info === null) {
-            return ['available' => false, 'message' => 'Site Health data is unavailable on this WordPress version.'];
-        }
-
         $out = [];
-        foreach ($info as $section => $details) {
+        foreach ($this->get_debug_data() as $section => $details) {
             // Skip empty or private sections, matching WordPress's copy output.
             if (empty($details['fields']) || ! empty($details['private'])) {
                 continue;
@@ -686,13 +780,7 @@ class WP_Health_Check_Plugin
     private function get_debug_data()
     {
         foreach (['plugin.php', 'update.php', 'misc.php', 'file.php', 'class-wp-debug-data.php'] as $inc) {
-            if (file_exists(ABSPATH.'wp-admin/includes/'.$inc)) {
-                require_once ABSPATH.'wp-admin/includes/'.$inc;
-            }
-        }
-
-        if (! class_exists('WP_Debug_Data') || ! method_exists('WP_Debug_Data', 'debug_data')) {
-            return null;
+            require_once ABSPATH.'wp-admin/includes/'.$inc;
         }
 
         return WP_Debug_Data::debug_data();
